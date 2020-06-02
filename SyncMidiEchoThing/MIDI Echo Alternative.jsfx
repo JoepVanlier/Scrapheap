@@ -1,0 +1,125 @@
+license: MIT
+(C) Joep Vanlier 2020
+
+desc:MIDI Delay Thing
+slider1:delay_time=1<1,128,1>Delay (quartner notes)
+slider2:feedback=0.5<0,1,.0001>Feedback
+slider3:nuke_buffer=0<0,1,1>Nuke
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+function nuke()
+(
+  note_count = 0;
+  N_data = 5;
+  minimal_decay = .01; // At which note level to remove the note
+  
+  // Reset buffer on init.
+  midi_buffer = 0;
+  memset(midi_buffer, 0, 32768);
+);
+nuke();
+
+@slider
+nuke_buffer > 0 ? (
+  nuke_buffer = 0;
+  nuke();
+);
+
+@block
+delay = floor(delay_time * srate * (60/tempo) / ts_num);
+
+note_on  = $x90; 
+note_off = $x80;
+while(midirecv(offset, msg, pitch, vel)) (
+  type = msg & 0xf0;
+  repeat_this = type == note_on || type == note_off;
+  
+  TEST = offset;
+
+  // Passthrough
+  midisend(offset, msg, pitch, vel);
+  
+  // Store in buffer
+  repeat_this ? (
+    ptr = midi_buffer + N_data * note_count;
+    ptr[] = cSample + offset + delay;
+    ptr[1] = msg;
+    ptr[2] = pitch;
+    ptr[3] = vel;
+    ptr[4] = 1.0;
+    
+    note_count += 1;
+  );
+);
+
+i = 0;
+ptr = midi_buffer;
+while(i < note_count) (
+  alhs = ptr[];
+  arhs = cSample;
+
+  ptr[] >= cSample && ptr[] < (cSample + samplesblock) ? (
+    ptr[4] *= feedback;
+    decay_level = ptr[4];
+    midisend(ptr[] - cSample, ptr[1], ptr[2], ptr[3] * decay_level);
+    
+    decay_level > minimal_decay ? (
+      ptr[] += delay;
+    ) : (
+      memcpy(ptr, ptr + N_data, N_data * (note_count - i + 1));
+      note_count -= 1;
+      ptr -= N_data;
+      i -= 1;
+    );
+  );
+  
+  ptr += N_data;
+  i += 1;
+);
+
+@sample
+/* Doing this in @sample was not accurate enough
+
+i = 0;
+ptr = midi_buffer;
+while(i < note_count) (
+  alhs = ptr[];
+  arhs = cSample;
+
+  ptr[] == cSample ? (
+    ptr[4] *= feedback;
+    decay_level = ptr[4];
+    midisend(0, ptr[1], ptr[2], ptr[3] * decay_level);
+    
+    decay_level > minimal_decay ? (
+      ptr[] += delay;
+    ) : (
+      memcpy(ptr, ptr + N_data, N_data * (note_count - i + 1));
+      note_count -= 1;
+      ptr -= N_data;
+      i -= 1;
+    );
+  );
+  
+  ptr += N_data;
+  i += 1;
+);*/
+
+cSample += 1;
+
+@gfx
+gfx_set(0, 0, 0, 0);
+gfx_rect(0, 0, gfx_w, gfx_h);
+gfx_setfont(1, "Arial", .5*gfx_h);
+gfx_set(1, 1, 1, 1);
+gfx_x = 0;
+gfx_y = 0;
+gfx_printf("Notes");
+gfx_x = 0;
+gfx_y = .5*gfx_h;
+gfx_printf("%d", note_count);

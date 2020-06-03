@@ -1,0 +1,230 @@
+desc:MIDI Speedometer
+tags: Speedometer
+version: 1.00
+author: Joep Vanlier
+License: MIT
+
+@init
+note_mem = 100;
+MAXNOTES = 10;      // <== Maximum of the speedometer
+updateTime = 0.25;  // Refresh time of the actual value (1.0 is once per second)
+antialias = 1;
+
+// Radii of the wheel
+radius0 = .41; // Big ticks
+radius1 = .44; // Small ticks
+radius2 = .48; // Small ticks
+radius3 = .45; // Highlight
+
+// Color of the small ticks
+stepr = 1;
+stepg = .2;
+stepb = .2;
+
+// Color of the exceeded small ticks
+stepr2 = 0;
+stepg2 = 0;
+stepb2 = 0;
+
+// Color of the outer arc
+arcr = 1;
+arcg = 1;
+arcb = 1;
+
+// Color of the outer arc
+textr = 1;
+textg = 1;
+textb = 1;
+
+// Background color
+bgr = 0;
+bgg = 0;
+bgb = 0;
+
+// Fontsize
+fontsize = 60;
+
+// Size of the dial
+pointersize = 4;
+
+// Minimum distance in time between notes (in seconds) for them to count as separate
+mindist = 0.05;
+
+// Modifier for the speed of the pointer
+pointerspeed = 1;
+
+motionblur = 0; // Value between 0 and 1
+ringRadFactor = 1;
+font = "Arial";
+
+@slider
+
+@block
+  // Store MIDI notes this block
+  notePtr = note_mem;
+  while (midirecv(offset,msg1,msg2,msg3)) (
+      msg1>$x89&&msg1<$xA0 && msg3!=0 ? (
+      notePtr[] = offset;
+      notePtr += 1;
+      notePtr[] = msg3;
+      notePtr += 1;
+      );
+      
+      midisend(offset,msg1,msg2,msg3); // passthrough MIDI events
+  );
+  notePtr[] = -1337;        // Signal end of note buffer
+  curSample = 0;
+  notePtr = note_mem;
+  notes_remain = 1;         // End of the note buffer?
+  note_next = notePtr[];
+  mDist = mindist * srate;
+  lastNote = 0;
+
+@sample  
+  // Some smoothed average
+  csample >= updateTime*srate ?
+  (
+    csample   = 0;
+    lastCount = min(MAXNOTES, notes/updateTime);
+    avg       = .75*avg + .25*notes/updateTime;
+    notes     = 0;
+  );
+  csample = csample + 1;
+
+  meter = meter + pointerspeed * 0.0001 * (avg-meter);
+
+  // Grab MIDI notes from the buffer we made in the block
+  // Take notes from the stack until we hit the end marker -1337
+  (notes_remain) ? (
+    while( note_next == curSample ) (
+      notePtr += 1;
+      (notePtr[] > 0) ? ( // note-on
+        ( csample - lastNote ) > mDist ? (
+          lastNote = csample;
+          notes = notes + 1;
+        );
+      );
+      notePtr += 1;
+      
+      // Avoid constantly dereferencing by picking up the next one
+      note_next = notePtr[];
+      notes_remain = note_next != -1337;
+    );
+  );
+  
+  // Where are we in the block?
+  curSample += 1;
+
+@gfx 300 300
+  gfx_clear = -1;
+   
+  // Clear screen first
+  gfx_r = bgr; 
+  gfx_g = bgg;
+  gfx_b = bgb; 
+  gfx_a = 1-motionblur;
+  gfx_x = gfx_y = 0;
+  gfx_rectto(gfx_w,gfx_h);
+
+  gfx_a = 1.0;  
+  gfx_x = gfx_y = 0;
+  gfx_setfont(2, font, fontsize);
+  
+  fraction = min(1,meter/MAXNOTES);
+  rad = min(gfx_w, gfx_h);
+  
+  XX = .5*gfx_w;
+  YY = .55*gfx_h;
+  
+  // Draw steps
+  steps = ringRadFactor*15;
+  dr = ringRadFactor * .03*gfx_h/steps;
+  cr = 0;
+  loop(steps,
+    gfx_r = fraction;
+    gfx_g = 1-fraction;
+    gfx_b = .1;
+    gfx_arc(XX, YY, radius3*rad+cr, -.75*$pi+.01, -.75*$pi + fraction*1.5*$pi, antialias);
+    cr += dr;
+  );
+  
+  // Draw steps
+  steps = 8 * MAXNOTES;
+  stepsize = 1.5*$pi / steps;
+  step2 = 1/steps;
+  cr = -.75*$pi;
+  t  = 0;
+  r1 = radius1*rad;
+  r2 = radius2*rad;
+  loop(steps,
+    t > fraction ? (
+      gfx_r = stepr;
+      gfx_g = stepg;
+      gfx_b = stepb;
+    ) : (
+      gfx_r = step2r;
+      gfx_g = step2g;
+      gfx_b = step2b;
+    );
+    gfx_line(XX + r1 * sin(cr), YY - r1 * cos(cr), XX + r2 * sin(cr), YY - r2 * cos(cr), antialias);
+    cr  += stepsize;
+    t   += step2;
+  );
+  
+  gfx_r = arcr;
+  gfx_g = arcg;
+  gfx_b = arcb;
+  gfx_arc(XX, YY, floor(.5*rad), -.75*$pi, .75*$pi, antialias);
+  gfx_arc(XX, YY, floor(.5*rad)+1, -.75*$pi, .75*$pi, antialias);  
+  
+  cr = -.75*$pi;
+  steps = MAXNOTES;
+  stepsize = 1.5*$pi / steps;
+  r1 = radius0*rad;
+  r2 = radius2*rad;
+  loop(steps+1,
+    cr -= .005;
+    gfx_line(XX + r1 * sin(cr), YY - r1 * cos(cr), XX + r2 * sin(cr), YY - r2 * cos(cr), antialias);
+    cr += .005;
+    gfx_line(XX + r1 * sin(cr), YY - r1 * cos(cr), XX + r2 * sin(cr), YY - r2 * cos(cr), antialias);
+    cr += .005;
+    gfx_line(XX + r1 * sin(cr), YY - r1 * cos(cr), XX + r2 * sin(cr), YY - r2 * cos(cr), antialias);
+    cr -= .005;
+    cr += stepsize;
+  );
+  
+  cr = -.75*$pi + fraction * 1.5*$pi;
+  //gfx_line(XX, YY, XX + r2 * sin(cr), YY - r2 * cos(cr), antialias);
+  //gfx_line(XX + 1, YY + 1, XX + r2 * sin(cr), YY - r2 * cos(cr), antialias);
+  
+  gfx_triangle(   XX + pointersize * cos(cr), 
+                  YY + pointersize * sin(cr), 
+                  XX - pointersize * cos(cr), 
+                  YY - pointersize * sin(cr), 
+                  XX + r2 * sin(cr), 
+                  YY - r2 * cos(cr), 
+                  antialias);
+            
+  XX = XX + 1; YY = YY + 1;      
+  gfx_triangle(   XX + pointersize * cos(cr), 
+                  YY + pointersize * sin(cr), 
+                  XX - pointersize * cos(cr), 
+                  YY - pointersize * sin(cr), 
+                  XX + r2 * sin(cr), 
+                  YY - r2 * cos(cr), 
+                  antialias);             
+                       
+  gfx_circle(XX, YY, pointersize, 1, antialias);
+ 
+  gfx_r = textr;
+  gfx_g = textg;
+  gfx_b = textb;
+  sprintf(str, "%d", avg);
+  gfx_measurestr(str, ww, hh);
+  gfx_x = 0.5*gfx_w - .5*ww;
+  gfx_y = .85*gfx_h -.5*hh;
+  gfx_printf(str);
+  
+  notePtrAtEnd=note_next;
+  
+

@@ -2,9 +2,10 @@ license: MIT
 (C) Joep Vanlier 2020
 
 desc:MIDI Delay Thing
-slider1:delay_time=1<1,128,1>Delay (quartner notes)
+slider1:delay_time=1<1,128,1>Delay (quarter notes)
 slider2:feedback=0.5<0,1,.0001>Feedback
 slider3:nuke_buffer=0<0,1,1>Nuke
+slider4:record=1<0,1,1>Record
 
 in_pin:left input
 in_pin:right input
@@ -39,13 +40,11 @@ while(midirecv(offset, msg, pitch, vel)) (
   type = msg & 0xf0;
   repeat_this = type == note_on || type == note_off;
   
-  TEST = offset;
-
   // Passthrough
   midisend(offset, msg, pitch, vel);
   
   // Store in buffer
-  repeat_this ? (
+  repeat_this && record ? (
     ptr = midi_buffer + N_data * note_count;
     ptr[] = cSample + offset + delay;
     ptr[1] = msg;

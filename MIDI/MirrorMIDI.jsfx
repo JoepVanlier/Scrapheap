@@ -1,0 +1,38 @@
+desc:MIDI mirror
+tags: MIDI mirror
+version: 1.00
+author: Joep Vanlier
+License: MIT
+
+slider1:76<0,200,1>Inversion point
+slider2:0<0,1,{Low,High}>Mirror low or high
+slider3:0<0,1,{OFF,ON}>Full inversion
+
+@init
+
+@slider
+
+@block
+  // Store MIDI notes this block
+  while (midirecv(offset,msg1,msg2,msg3)) (
+      noteOn = msg1>$x89&&msg1<$xA0 && msg3!=0;
+      noteOff = (msg1>$x79&&msg1<$x90) || (msg1>$x89&&msg1<$xA0 && msg3==0);
+      (noteOn||noteOff) ? (
+        slider3 == 0 ? (
+          slider2 == 0 ? (
+            msg2 < slider1 ? msg2 = slider1 + (slider1-msg2);
+          ) : (
+            msg2 > slider1 ? msg2 = slider1 + (slider1-msg2); 
+          );
+        ) : (
+          msg2 = slider1-msg2;
+        );
+      );
+ 
+      midisend(offset,msg1,msg2,msg3);
+  );
+
+@sample
+
+@gfx
+

@@ -1,0 +1,340 @@
+desc:Saike / Mr Lo-Fi
+tags: detune / envelope muffler / chorus
+version: 0.01
+author: Joep Vanlier
+changelog: 
+  + First commit
+license: MIT
+
+
+slider2:lpf_level=0.6<0,1,.00001>lpf
+slider3:rate=700<75,1000,.1>slowness [ms]
+slider4:depth=240<0,350,.0001>depth
+slider5:flutter_level=0.0<0,.05,0.00001>flutter
+
+slider11:saturation=0<0,3,.00001>dynamic saturation
+slider12:asymmetry=0<0,1,.00001>saturation asymmetry
+slider14:dim_expand=.4<0,1,.00001>dimension expander
+slider15:feedback=.1<0,.5,.00001>feedback
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+update_rate = 1;
+tau_gain = - update_rate * log(.1) / 2 / srate;
+tau_atk = - update_rate * log(.1) / (.001 * 20) / srate;
+tau_decay = - update_rate * log(.1) / (.001 * 300) / srate;
+
+gate_left = 0;
+gate_right = 0;
+
+function initBuffer(buffer_in, buffer_max_in)
+  local()
+  global()
+  instance(write_ptr, buffer_max, buffer)
+  (
+    buffer      = buffer_in;
+    buffer_max  = buffer_max_in;
+    
+    write_ptr < buffer ? (
+      write_ptr = buffer 
+    ) : ( write_ptr > buffer_max ) ? write_ptr = buffer
+  );
+  
+function resetBuffer()
+  local()
+  global()
+  instance(buffer_max, buffer)
+  (
+    memset(buffer, 0, buffer_max - buffer + 1);
+  );
+  
+function writeBuffer(sample)
+  local()
+  global()
+  instance(write_ptr, buffer, buffer_max)
+  (
+    write_ptr[] = sample;
+    write_ptr += 1;
+    write_ptr > buffer_max ? write_ptr = buffer;
+  );
+  
+function readBuffer(offset)
+  local(id0, id1, id2, id3, ism1, is0, is1, is2, frac)
+  global()
+  instance(read_ptr, write_ptr, buffer, buffer_max)
+  (
+    read_ptr = write_ptr - offset - 3;
+    
+    frac = read_ptr - floor(read_ptr);
+    read_ptr = floor(read_ptr);
+    read_ptr < buffer ? read_ptr += (buffer_max - buffer + 1);    
+  
+    ism1 = read_ptr[];
+    read_ptr += 1; read_ptr > buffer_max ? read_ptr = buffer;
+    is0 = read_ptr[];
+    read_ptr += 1; read_ptr > buffer_max ? read_ptr = buffer;
+    is1 = read_ptr[];
+    read_ptr += 1; read_ptr > buffer_max ? read_ptr = buffer;    
+    is2 = read_ptr[];
+    
+    id0 = is0;
+    id1 = 0.5*(is1 - ism1);
+    id2 = ism1 - 2.5*is0 + 2*is1 - 0.5*is2;
+    id3 = 0.5*(is2 - ism1) + 1.5 * (is0 - is1);
+    ((id3*frac+id2)*frac+id1)*frac+id0;
+  );
+
+function init_linearSVF(freq, res)
+  global()
+  local(g)
+  instance(f0, ic1eq, ic2eq, k, a1, a2, a3)
+  (
+    f0 = .5 * exp( (1-freq) * log(20/22050) );
+    g = tan(.5 * $pi * f0);
+    k = 2 - 2*res;
+        
+    a1 = 1/(1+g*(g+k));
+    a2 = g*a1;
+    a3 = g*a2;
+  ); 
+
+function init_linearSVF_absolute(f0, res)
+  global(srate)
+  local(g)
+  instance(f0, ic1eq, ic2eq, k, a1, a2, a3)
+  (
+    g = tan($pi * f0 / srate);
+    k = 2 - 2*res;
+        
+    a1 = 1/(1+g*(g+k));
+    a2 = g*a1;
+    a3 = g*a2;
+  ); 
+
+function reset_linearSVF()
+  global()
+  local()
+  instance(ic1eq, ic2eq, k, a1, a2, a3)
+  (
+    ic1eq = ic2eq = 0;  
+  );
+  
+function eval_linearSVF_LP(v0)
+  global()
+  local(v1, v2, v3)
+  instance(ic1eq, ic2eq, a1, a2, a3)
+  (
+    v3 = v0 - ic2eq;
+    v1 = a1 * ic1eq + a2 * v3;
+    v2 = ic2eq + a2 * ic1eq + a3*v3;
+    ic1eq = 2*v1 - ic1eq;
+    ic2eq = 2*v2 - ic2eq;    
+    
+    v2
+  );
+
+function eval_linearSVF_HP(v0)
+  global()
+  local(v1, v2, v3)
+  instance(ic1eq, ic2eq, k, a1, a2, a3)
+  (
+    v3 = v0 - ic2eq;
+    v1 = a1 * ic1eq + a2 * v3;
+    v2 = ic2eq + a2 * ic1eq + a3*v3;
+    ic1eq = 2*v1 - ic1eq;
+    ic2eq = 2*v2 - ic2eq;    
+    
+    v0 - k*v1 - v2
+  );
+
+  function noise_gen(dt)
+  instance(timeleft, d0, d1, d2, d3, w_noise, p_noise)
+  global()
+  local(t, t2, a0, a1, a2, a3)
+  (
+    timeleft <= 0 ? (
+      d3 = d2;
+      d2 = d1;
+      d1 = d0;
+      d0 = 2.0 * (rand()-0.5);
+      d0 *= d0 * d0;
+      d0 *= d0 * d0;
+      
+      timeleft = timeleft + 1.0;
+    );
+    
+    // Cubic interpolation
+    t = 1.0 - timeleft;
+    t2 = t * t;
+    a0 = d0 - d1 - d3 + d2;
+    a1 = d3 - d2 - a0;
+    a2 = d1 - d3;
+    a3 = d2;
+    
+    timeleft -= dt;
+    
+    (a0*t*t2+a1*t2+a2*t+a3);
+  );
+
+freemem = (l_buffer = freemem) + 2001;
+freemem = (r_buffer = freemem) + 2001;
+freemem = (l_pitch_buffer = freemem) + 32768;
+freemem = (r_pitch_buffer = freemem) + 32768;
+freemem = (draw_buffer = freemem) + 500000;
+freemem = (draw_buffer2 = freemem) + 500000;
+
+// Chorus materials
+l_delay.initBuffer(l_buffer, l_buffer + 2000);
+r_delay.initBuffer(r_buffer, r_buffer + 2000);
+l_delay_filt.init_linearSVF_absolute(340, 0);
+r_delay_filt.init_linearSVF_absolute(340, 0);
+
+l_pitch.initBuffer(l_pitch_buffer, l_pitch_buffer + 32766);
+r_pitch.initBuffer(r_pitch_buffer, r_pitch_buffer + 32766);
+buf.initBuffer(draw_buffer, draw_buffer + 500000);
+buf2.initBuffer(draw_buffer2, draw_buffer2 + 500000);
+
+@slider
+lpf_thresh = (exp(5*lpf_level) - exp(0)) / (exp(5) - exp(0));
+
+@block
+setpoint = 402;
+(pdc_delay != setpoint) ? (
+  pdc_top_ch = 2;
+  pdc_bot_ch = 0;
+  pdc_delay = setpoint;
+);
+
+noise_rate = - log(.1) / (.001 * rate) / srate;
+israte = 1.0 / srate;
+flutter_speed = 2.0 * $pi * 35.0 / srate;
+
+@sample
+// Overall gain estimator
+vol_est = max(max((1 - tau_gain) * vol_est, spl0), spl1);
+
+csample += 1;
+
+(csample % update_rate) == 0 ? (
+  potato = (abs(spl0) / vol_est);
+  left_change = (abs(spl0) / vol_est) < lpf_thresh ? tau_atk * (1.0 - gate_left) : - tau_decay * gate_left;
+  gate_left += left_change;
+
+  right_change = (abs(spl1) / vol_est) < lpf_thresh ? tau_atk * (1.0 - gate_right) : - tau_decay * gate_right;
+  gate_right += right_change;
+  
+  l_gate_filt.init_linearSVF(gate_left, 0.1);
+  r_gate_filt.init_linearSVF(gate_right, 0.1);
+  
+  buf2.writeBuffer((1.0 - .5*(gate_left+gate_right)));
+);
+
+
+function naiveTri(t)
+(
+  t -= floor(t);
+  t <= 0.5 ? (
+    (4.0 * t - 1.0)
+  ) : (
+    (3.0 - 4.0 * t)
+  )
+);
+
+function tanh(x)
+local()
+global()
+instance()
+(
+  2/(1+exp(-2*x)) - 1
+);
+
+l = l_gate_filt.eval_linearSVF_LP(spl0);
+r = r_gate_filt.eval_linearSVF_LP(spl1);
+
+drift = .999 * drift + 0.001 * (abs(l) + abs(r));
+
+// Adaptive saturation based on how much the LPF is doing to get some HF back
+saturation > 0 ? (
+  iv = .99 * iv + .01 * (saturation / (.05 + vol_est * (gate_left + gate_right)));
+  l = tanh((l + asymmetry * drift) * iv)/iv;
+  r = tanh((r + asymmetry * drift) * iv)/iv;
+);
+
+asymmetry ? (
+  alpha = .995;
+  dc_l = alpha * dc_l + (1.0-alpha) * l;
+  dc_r = alpha * dc_r + (1.0-alpha) * r;
+  
+  l -= dc_l;
+  r -= dc_r;
+);
+
+// Preserve original bass
+dim_expand ? (
+  l_delay.writeBuffer(l_delay_filt.eval_linearSVF_HP(l));
+  r_delay.writeBuffer(r_delay_filt.eval_linearSVF_HP(r));
+
+  chorus_tri = naiveTri(csample * israte * .25);
+  ch_cur = dim_expand * .001 + ch_cur * .999;
+  l_offset = ch_cur * (0.0075 + 0.002 * chorus_tri) * srate;
+  r_offset = ch_cur * (0.0075 - 0.002 * chorus_tri) * srate;
+
+  l -= .5 * r_delay.readBuffer(r_offset);
+  r -= .5 * r_delay.readBuffer(l_offset);
+);
+
+alpha = 0;
+n = alpha * n + (1.0-alpha) * noise1.noise_gen(noise_rate);
+
+flutter_level > 0 ? (
+  flutter = flutter_level * sin(flutter_speed * csample);
+);
+
+buf.writeBuffer(n);
+
+l_pitch.writeBuffer(l + feedback * fb_r);
+r_pitch.writeBuffer(r + feedback * fb_l);
+
+l = l_pitch.readBuffer(400 + depth * (n + flutter));
+r = r_pitch.readBuffer(400 + depth * (n - flutter));
+
+fb_l = l;
+fb_r = r;
+
+spl0 = l;
+spl1 = r;
+
+@gfx
+gfx_set(0, 0, 0, 1);
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+gfx_set(.8, .2, .4, 1);
+c = 0;
+x = 0;
+
+gfx_x = 0;
+gfx_y = 0;
+dc = 500000 / gfx_w;
+loop(gfx_w,
+  next_pt = buf.readBuffer(c + 1);
+  gfx_lineto(x, .5 * gfx_h + .5 * gfx_h * next_pt);
+  c += dc;
+  x += 1;
+);
+
+gfx_x = 0;
+gfx_y = 0;
+dc = 500000 / gfx_w;
+x = 0;
+c = 0;
+gfx_set(.4, .2, .8, 1);
+loop(gfx_w,
+  next_pt = buf2.readBuffer(c + 1);
+  gfx_lineto(x, .5 * gfx_h + .5 * gfx_h * next_pt);
+  c += dc;
+  x += 1;
+);

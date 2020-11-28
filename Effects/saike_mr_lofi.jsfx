@@ -11,11 +11,19 @@ slider2:lpf_level=0.6<0,1,.00001>lpf
 slider3:rate=700<75,1000,.1>slowness [ms]
 slider4:depth=240<0,350,.0001>depth
 slider5:flutter_level=0.0<0,.05,0.00001>flutter
+slider6:flutter_rate=22.0<1,50,.01>flutter rate
 
-slider11:saturation=0<0,3,.00001>dynamic saturation
+slider11:saturation=0<0,3,.00001>dynamic saturation (0=off)
 slider12:asymmetry=0<0,1,.00001>saturation asymmetry
-slider14:dim_expand=.4<0,1,.00001>dimension expander
+slider14:dim_expand=.4<0,1,.00001>dimension expander (0=off)
 slider15:feedback=.1<0,.5,.00001>feedback
+
+slider20:resonance=0.1<0,.99,.01>resonance
+
+slider30:noise_level=0<0,.05,.0001>Model noise (0=off)
+
+slider32:attack=20<0,80,.001>Attack [ms]
+slider33:decay=300<0,300,.001>Decay [ms]
 
 in_pin:left input
 in_pin:right input
@@ -25,8 +33,8 @@ out_pin:right output
 @init
 update_rate = 1;
 tau_gain = - update_rate * log(.1) / 2 / srate;
-tau_atk = - update_rate * log(.1) / (.001 * 20) / srate;
-tau_decay = - update_rate * log(.1) / (.001 * 300) / srate;
+tau_atk = - update_rate * log(.1) / (.001 * attack) / srate;
+tau_decay = - update_rate * log(.1) / (.001 * decay) / srate;
 
 gate_left = 0;
 gate_right = 0;
@@ -211,7 +219,10 @@ setpoint = 402;
 
 noise_rate = - log(.1) / (.001 * rate) / srate;
 israte = 1.0 / srate;
-flutter_speed = 2.0 * $pi * 35.0 / srate;
+flutter_speed = 2.0 * $pi * flutter_rate / srate;
+
+tau_atk = - update_rate * log(.1) / (.001 * attack) / srate;
+tau_decay = - update_rate * log(.1) / (.001 * decay) / srate;
 
 @sample
 // Overall gain estimator
@@ -227,12 +238,36 @@ csample += 1;
   right_change = (abs(spl1) / vol_est) < lpf_thresh ? tau_atk * (1.0 - gate_right) : - tau_decay * gate_right;
   gate_right += right_change;
   
-  l_gate_filt.init_linearSVF(gate_left, 0.1);
-  r_gate_filt.init_linearSVF(gate_right, 0.1);
+  l_gate_filt.init_linearSVF(gate_left, resonance);
+  r_gate_filt.init_linearSVF(gate_right, resonance);
   
   buf2.writeBuffer((1.0 - .5*(gate_left+gate_right)));
 );
 
+
+alpha_compander = 0.0001;
+function compander_compress(x)
+local()
+global(alpha_compander)
+instance(y_comp, y_comp_current)
+(
+  y_comp == 0 ? y_comp = abs(x);
+
+  // Signal level detection
+  y_comp = abs(y_comp_current) * alpha_compander + y_comp * (1-alpha_compander);
+  
+  y_comp_current = x / (.0001 + y_comp)
+);
+
+function compander_expand(x)
+local()
+global(alpha_compander)
+instance(y_expand)
+(
+  y_expand = abs(x) * alpha_compander + y_expand * (1-alpha_compander);
+
+  x * y_expand
+);
 
 function naiveTri(t)
 (
@@ -252,26 +287,8 @@ instance()
   2/(1+exp(-2*x)) - 1
 );
 
-l = l_gate_filt.eval_linearSVF_LP(spl0);
-r = r_gate_filt.eval_linearSVF_LP(spl1);
-
-drift = .999 * drift + 0.001 * (abs(l) + abs(r));
-
-// Adaptive saturation based on how much the LPF is doing to get some HF back
-saturation > 0 ? (
-  iv = .99 * iv + .01 * (saturation / (.05 + vol_est * (gate_left + gate_right)));
-  l = tanh((l + asymmetry * drift) * iv)/iv;
-  r = tanh((r + asymmetry * drift) * iv)/iv;
-);
-
-asymmetry ? (
-  alpha = .995;
-  dc_l = alpha * dc_l + (1.0-alpha) * l;
-  dc_r = alpha * dc_r + (1.0-alpha) * r;
-  
-  l -= dc_l;
-  r -= dc_r;
-);
+l = spl0;
+r = spl1;
 
 // Preserve original bass
 dim_expand ? (
@@ -296,14 +313,49 @@ flutter_level > 0 ? (
 
 buf.writeBuffer(n);
 
+noise_level > 0 ? (
+  l = l_compander.compander_compress(l);
+  r = r_compander.compander_compress(r);
+  r1 = rand();
+  r2 = rand();
+  l += noise_level * (r1 * r1 * r1 - 0.5);
+  r += noise_level * (r2 * r2 * r2 - 0.5);
+);
+
 l_pitch.writeBuffer(l + feedback * fb_r);
 r_pitch.writeBuffer(r + feedback * fb_l);
 
 l = l_pitch.readBuffer(400 + depth * (n + flutter));
 r = r_pitch.readBuffer(400 + depth * (n - flutter));
 
+noise_level > 0 ? (
+  l = l_compander.compander_expand(l);
+  r = l_compander.compander_expand(r);
+);
+
 fb_l = l;
 fb_r = r;
+
+l = l_gate_filt.eval_linearSVF_LP(l);
+r = r_gate_filt.eval_linearSVF_LP(r);
+
+drift = .999 * drift + 0.001 * (abs(l) + abs(r));
+
+// Adaptive saturation based on how much the LPF is doing to get some HF back
+saturation > 0 ? (
+  iv = .99 * iv + .01 * (saturation / (.05 + vol_est * (gate_left + gate_right)));
+  l = tanh((l + asymmetry * drift) * iv)/iv;
+  r = tanh((r + asymmetry * drift) * iv)/iv;
+);
+
+asymmetry ? (
+  alpha = .995;
+  dc_l = alpha * dc_l + (1.0-alpha) * l;
+  dc_r = alpha * dc_r + (1.0-alpha) * r;
+  
+  l -= dc_l;
+  r -= dc_r;
+);
 
 spl0 = l;
 spl1 = r;

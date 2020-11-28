@@ -245,7 +245,7 @@ csample += 1;
 );
 
 
-alpha_compander = 0.0001;
+alpha_compander = 0.001;
 function compander_compress(x)
 local()
 global(alpha_compander)
@@ -330,7 +330,8 @@ r = r_pitch.readBuffer(400 + depth * (n - flutter));
 
 noise_level > 0 ? (
   l = l_compander.compander_expand(l);
-  r = l_compander.compander_expand(r);
+  r = r_compander.compander_expand(r);
+1
 );
 
 fb_l = l;

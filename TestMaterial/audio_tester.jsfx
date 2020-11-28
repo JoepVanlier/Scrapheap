@@ -1,0 +1,76 @@
+desc:new effect
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+gain = 1;
+program = 0;
+t = 0;
+pp = 1;
+
+@slider
+
+@block
+
+
+@sample
+pulse = 2 * srate;
+
+program < 1 ? (
+  (t % floor(pulse) == 0) ? gain -= .05;
+  
+  spl0 = spl1 = gain * (2*rand() - 1.0);
+  
+  gain < 0 ? ( gain = 0; program = 1 );
+);
+
+program == 1 ? (
+  (t % floor(pulse) == 0) ? gain += .05;
+  
+  spl0 = spl1 = gain * (2*rand() - 1.0);
+  
+  gain > 1.0 ? ( gain = 2; program = 2; t = 1; );
+);
+
+program == 2 ? (
+  (t % floor(pulse) == 0) ? ( program = 3; gain = 1; t = 0; );
+  spl0 = spl1 = 0;
+);
+
+program == 3 ? (
+  dist = floor(srate * 30 / 1000);
+  gain < 0 ? (program = 4; t = 0; gain = 1; );
+  
+  t < pulse ? ( 
+    sig = gain * (2 * rand() - 1.0);
+    spl1 = spl0 = gain * sig;
+  ) : (
+    (t-pulse) % dist == 0 ? (
+      n += 1;
+      spl1 = spl0 = gain;
+      (n > 50) ? (n = 0; t = 0; gain -= 0.05;);
+    ) : (
+      spl1 = spl0 = 0
+    );
+  );
+);
+
+program == 4 ? (
+  gain < 0 ? program = 5;
+
+  sweeplen = 4;
+  dp = 1 / (sweeplen*srate);
+  
+  spl0 = spl1 = gain * sin(.25 * 2*$pi*(10^pp) * t / srate);
+  pp = pp + 3 * dp;
+  
+  ss = max(ss, 10^pp);
+  
+  (t > (sweeplen * srate)) ? ( pp = 1; t = 0; gain -= 0.05; );
+);
+
+t += 1;
+

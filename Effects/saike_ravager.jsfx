@@ -1,0 +1,115 @@
+desc:Ravager
+tags: Extreme upward compressor
+version: 0.01
+author: Joep Vanlier
+changelog: First commit
+Copyright (C) 2019 Joep Vanlier
+License: MIT
+
+slider1:Ratio1=2<0,2,.0001>Ratio (-)
+slider2:Attack1=0.2<0,1,.00001>Attack (-)
+slider3:Release1=0.4<0,1,.00001>Decay (-)
+slider4:Thresh=0<-10,10,0.0001>Threshold [dB]
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+  /* Gain computer */
+  function calcGain(xG)
+    instance(thresh, ratio, iratio)
+    local(diff, tmp)
+    global()
+    (
+      diff = xG - thresh;
+      
+      ( xG < thresh ) ? (
+        thresh + diff * iratio
+      ) : (
+        xG + diff * iratio
+      );
+    );
+
+
+  function setCompressorOptions(thr, rat, s_atk, s_rel, min_attack, max_attack, min_decay, max_decay)
+    instance(rt, at, thresh, ratio, iratio, attack, release)
+    global(srate)
+    local(csrate, alpha, beta, atk)
+    (
+      beta          = log(min_attack);
+      alpha         = log(max_attack)-beta;
+      attack        = exp(alpha * s_atk + beta) - 1;
+      beta          = log(min_decay);
+      alpha         = log(max_decay)-beta;
+      release       = exp(alpha * s_rel + beta);
+    
+      csrate        = srate;
+      thresh        = thr;
+      ratio         = exp(rat*rat);
+      iratio        = 1/ratio;
+      at            = exp(-1/(.5*.001*attack*csrate));
+      rt            = exp(-1/(.5*.001*release*csrate));
+    );     
+    
+  // Topology 3:
+  /* Level detection log domain */
+  function compressor(l ,r)
+    instance( rt, at, yL, 
+              xG, c, ya, outGain )
+    global()
+    local(xL, yG)
+    (
+      xG  = 20 * log10(max(max(abs(l), abs(r)), 0.000001)); /* Peak */
+     
+      /* Calculate the gain curve */
+      yG = this.calcGain(xG);
+      xL  = xG - yG;
+     
+      // Update smooth peak detector (peak)
+      xL > yL ? (
+        yL = at * yL + (1.0-at) * xL;
+      ) : (
+        ya = max( xL, rt * ya + (1.0-rt) * xL );
+        yL = at * yL + (1.0-at) * ya;
+      );
+     
+      // Calculate gain correction
+      c   = -yL;
+     
+      // Apply current gain correction
+      outGain = exp(.11512925464970228420089957273422 * c); //log(10)/20 = .11512925464970228420089957273422;      
+    );
+
+  function tanh(x)
+  local()
+  global()
+  instance()
+  (
+    (2/(1+exp(-2*x)))-1.0
+  )
+
+@slider
+comp.setCompressorOptions(Thresh, Ratio1, Attack1, Release1, 0, 120, 5, 400);
+
+@block
+
+@sample
+// Add a tiny delay to catch bad clicks and pops
+function tiny_delay(x)
+instance(d1, d2, d3, d4, d5, d6)
+(
+  d6 = d5;
+  d5 = d4;
+  d4 = d3;
+  d3 = d2;
+  d2 = d1;
+  d1 = x;
+  d6
+);
+
+correction = comp.compressor(spl0, spl1);
+spl0 = tanh(left.tiny_delay(spl0) * correction);
+spl1 = tanh(right.tiny_delay(spl1) * correction);
+

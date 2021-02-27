@@ -1,8 +1,8 @@
 desc:Ravager
 tags: Extreme upward compressor
-version: 0.01
+version: 0.02
 author: Joep Vanlier
-changelog: First commit
+changelog: Take into account delay
 Copyright (C) 2019 Joep Vanlier
 License: MIT
 
@@ -88,7 +88,10 @@ out_pin:right output
   instance()
   (
     (2/(1+exp(-2*x)))-1.0
-  )
+  );
+
+  pdc_top_ch = 2;
+  pdc_delay = 5;
 
 @slider
 comp.setCompressorOptions(Thresh, Ratio1, Attack1, Release1, 0, 120, 5, 400);

@@ -1,0 +1,37 @@
+desc:sustain latch
+tags: sustain latch
+version: 0.01
+author: Joep Vanlier
+changelog: Initial commit
+license: MIT
+about:
+  Basic effect that toggles sustain
+
+@init
+
+@slider
+
+@block
+while (
+  midirecv(ts, msg, msg2, msg3) ? (
+    ((msg == $xB0) && (msg2 == $x40)) ? (
+      (msg3 > 10) ? (
+        sustain = 1.0 - sustain;
+        midisend(0, $xB0, $x40, sustain * 128);
+      );
+    ) : (
+      // Just forward all the rest
+      midisend(ts, msg, msg2, msg3);
+    );
+    1
+  ) : 0;
+);
+
+@sample
+
+@gfx
+gfx_x = gfx_y = 0;
+gfx_set(1, 1, 1, 1);
+gfx_setfont(1, "Arial", gfx_h);
+gfx_printf(sustain ? "Sustaining" : "No sustain");
+
